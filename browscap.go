@@ -9,6 +9,10 @@ import (
 	"net/http"
 	"os"
 	"unicode"
+
+	"time"
+
+	cache2 "github.com/patrickmn/go-cache"
 )
 
 const (
@@ -17,17 +21,18 @@ const (
 )
 
 var (
-	dict        *dictionary
-	initialized bool
-	version     string
-	debug       bool
+	dict           *dictionary
+	initialized    bool
+	version        string
+	debug          bool
+	browscap_cache *cache2.Cache
 )
 
 func Debug(val bool) {
 	debug = val
 }
 
-func InitBrowsCap(path string, force bool) error {
+func InitBrowsCap(path string, force bool, expiration time.Duration, cleanup time.Duration) error {
 	if initialized && !force {
 		return nil
 	}
@@ -37,6 +42,8 @@ func InitBrowsCap(path string, force bool) error {
 	if dict, err = loadFromIniFile(path); err != nil {
 		return fmt.Errorf("browscap: An error occurred while reading file, %v ", err)
 	}
+
+	browscap_cache = cache2.New(expiration, cleanup)
 
 	initialized = true
 	return nil
@@ -97,6 +104,14 @@ func GetBrowser(userAgent string) (browser *Browser, ok bool) {
 		return
 	}
 
+	if cache, haveCache := browscap_cache.Get(userAgent); haveCache {
+		if browser, ok = cache.(*Browser); ok {
+			return
+		} else {
+			browscap_cache.Delete(userAgent)
+		}
+	}
+
 	agent := mapToBytes(unicode.ToLower, userAgent)
 	defer bytesPool.Put(agent)
 
@@ -108,6 +123,7 @@ func GetBrowser(userAgent string) (browser *Browser, ok bool) {
 	browser = dict.getBrowser(name)
 	if browser != nil {
 		ok = true
+		browscap_cache.SetDefault(userAgent, browser)
 	}
 
 	return
