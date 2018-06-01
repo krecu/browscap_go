@@ -99,7 +99,12 @@ func DownloadFile(saveAs string) error {
 	return nil
 }
 
-func GetBrowser(userAgent string) (browser *Browser, ok bool) {
+func GetBrowser(userAgent string) (browser *Browser, err error) {
+
+	var (
+		ok bool
+	)
+
 	if !initialized {
 		return
 	}
@@ -117,13 +122,15 @@ func GetBrowser(userAgent string) (browser *Browser, ok bool) {
 
 	name := dict.tree.Find(agent)
 	if name == "" {
+		err = fmt.Errorf("Bad UA")
 		return
 	}
 
 	browser = dict.getBrowser(name)
 	if browser != nil {
-		ok = true
 		browscap_cache.SetDefault(userAgent, browser)
+	} else {
+		err = fmt.Errorf("Bad UA")
 	}
 
 	return
