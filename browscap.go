@@ -4,6 +4,7 @@
 package browscap_go
 
 import (
+	"encoding/json"
 	"fmt"
 	"io/ioutil"
 	"net/http"
@@ -12,7 +13,8 @@ import (
 
 	"time"
 
-	cache2 "github.com/patrickmn/go-cache"
+	compress "github.com/bkaradzic/go-lz4"
+	cache "github.com/patrickmn/go-cache"
 )
 
 const (
@@ -25,7 +27,7 @@ var (
 	initialized    bool
 	version        string
 	debug          bool
-	browscap_cache *cache2.Cache
+	browscap_cache *cache.Cache
 )
 
 func Debug(val bool) {
@@ -43,10 +45,14 @@ func InitBrowsCap(path string, force bool, expiration time.Duration, cleanup tim
 		return fmt.Errorf("browscap: An error occurred while reading file, %v ", err)
 	}
 
-	browscap_cache = cache2.New(expiration, cleanup)
+	browscap_cache = cache.New(expiration, cleanup)
 
 	initialized = true
 	return nil
+}
+
+func Close() {
+	browscap_cache.Flush()
 }
 
 func InitializedVersion() string {
@@ -101,21 +107,18 @@ func DownloadFile(saveAs string) error {
 
 func GetBrowser(userAgent string) (browser *Browser, err error) {
 
-	var (
-		ok bool
-	)
-
 	if !initialized {
 		return
 	}
 
-	if cache, haveCache := browscap_cache.Get(userAgent); haveCache {
-		if browser, ok = cache.(*Browser); ok {
-			return
-		} else {
-			browscap_cache.Delete(userAgent)
-		}
+	hash := userAgent
+
+	browser, err = GetCache(hash)
+	if err == nil {
+		return
 	}
+
+	err = nil
 
 	agent := mapToBytes(unicode.ToLower, userAgent)
 	defer bytesPool.Put(agent)
@@ -128,10 +131,55 @@ func GetBrowser(userAgent string) (browser *Browser, err error) {
 
 	browser = dict.getBrowser(name)
 	if browser != nil {
-		browscap_cache.SetDefault(userAgent, browser)
+		SetCache(userAgent, browser)
 	} else {
 		err = fmt.Errorf("Bad UA")
 	}
+
+	return
+}
+
+func SetCache(key string, data interface{}) (err error) {
+	buf, err := Marshal(data)
+	if err == nil {
+		browscap_cache.SetDefault(key, buf)
+	}
+	return
+}
+
+func GetCache(key string) (browser *Browser, err error) {
+
+	if buf, ok := browscap_cache.Get(key); ok {
+		if jsonData, err := Unmarshal(buf.([]byte)); err == nil {
+			if err = json.Unmarshal(jsonData, &browser); err != nil {
+				browscap_cache.Delete(key)
+			}
+		} else {
+			browscap_cache.Delete(key)
+		}
+	} else {
+		err = fmt.Errorf("empty")
+	}
+
+	return
+}
+
+func Marshal(value interface{}) (bufCompress []byte, err error) {
+	var (
+		bufJson []byte
+	)
+	bufJson, err = json.Marshal(value)
+
+	if err == nil {
+		bufCompress, err = compress.Encode(nil, bufJson)
+	}
+
+	return
+}
+
+func Unmarshal(buf []byte) (value []byte, err error) {
+
+	value, err = compress.Decode(nil, buf)
 
 	return
 }
